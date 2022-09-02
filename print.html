@@ -82,7 +82,7 @@
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded "><a href="whoami.html">whoami</a></li><li class="chapter-item expanded "><div>tag</div></li><li><ol class="section"><li class="chapter-item expanded "><a href="tags/rust.html">Rust</a></li></ol></li><li class="chapter-item expanded "><div>all</div></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded "><a href="whoami.html">whoami</a></li><li class="chapter-item expanded "><div>tag</div></li><li><ol class="section"><li class="chapter-item expanded "><a href="tags/rust.html">Rust</a></li></ol></li><li class="chapter-item expanded "><a href="all.html">all</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="articles/20220902_speed_test_slice_vs_pointer.html">Rustのスライスとポインタの速度比較 (20220902)</a></li></ol></li></ol>
             </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
         </nav>
@@ -146,6 +146,84 @@
                         <h1 id="whoami"><a class="header" href="#whoami">whoami</a></h1>
 <p>なぎです</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="tag-rust"><a class="header" href="#tag-rust">tag: Rust</a></h1>
+<ul>
+<li><a href="tags/./articles/20220902_speed_test_slice_vs_pointer.html">Rustのスライスとポインタの速度比較 (20220902)</a></li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div><ul>
+<li><a href="./articles/20220902_speed_test_slice_vs_pointer.html">Rustのスライスとポインタの速度比較 (20220902)</a></li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="rustのスライスとポインタの速度比較"><a class="header" href="#rustのスライスとポインタの速度比較">Rustのスライスとポインタの速度比較</a></h1>
+<p>どんぐらい違うのかなーって気になったので, 適当に実験した軽いメモ</p>
+<p>1000万回回したらこんな感じ</p>
+<pre><code>Start!
+slice_time: 0.666
+pointer_time: 0.485
+43175
+39986
+</code></pre>
+<p>コードはこれ</p>
+<p>変に最適化されないようにしたつもり</p>
+<pre><code>use std::time::Instant;
+use rand::Rng;
+
+fn main() {
+    // 試行回数
+    let count = 10000000;
+    // バッファサイズ
+    let size = 100000;
+
+    let mut rng = rand::thread_rng();
+
+    // 2つのバッファ用意して適当に値放り込んどく
+    let mut buf1: Vec&lt;u8&gt; = Vec::new();
+    let mut buf2: Vec&lt;u8&gt; = Vec::new();
+    for _ in 0..size {
+        buf1.push(rng.gen_range(0..255));
+        buf2.push(rng.gen_range(0..255));
+    }
+
+    // スライスとポインタ用意するよ
+    let slice_buf = &amp;buf1;
+    let pointer_buf = buf2.as_ptr();
+
+    // アクセス先のindexを事前に用意
+    let mut index_list: Vec&lt;usize&gt; = Vec::new();
+    for _ in 0..count {
+        index_list.push(rng.gen_range(0..size));
+    }
+
+    // アクセスした値を放り込む箱用意しとくよ
+    let mut slice_result: Vec&lt;u8&gt; = vec![0;count];
+    let mut pointer_result: Vec&lt;u8&gt; = vec![0;count];
+
+
+    println!(&quot;Start!&quot;);
+
+    // スライスアクセス計測
+    let slice_start = Instant::now();
+    for (i, index) in index_list.iter().enumerate() {
+        slice_result[i] = slice_buf[*index];
+    }
+    let slice_end = slice_start.elapsed();
+    println!(&quot;slice_time: {}.{:03}&quot;, slice_end.as_secs(), slice_end.subsec_nanos() / 1_000_000);
+
+
+    // ポインタアクセス計測
+    let pointer_start = Instant::now();
+    for (i, index) in index_list.iter().enumerate() {
+        unsafe {
+            pointer_result[i] = *pointer_buf.offset(*index as isize);
+        }
+    }
+    let pointer_end = pointer_start.elapsed();
+    println!(&quot;pointer_time: {}.{:03}&quot;, pointer_end.as_secs(), pointer_end.subsec_nanos() / 1_000_000);
+
+
+    // なんか処理しとかないと, 最適化で消える気がするので適当に
+    println!(&quot;{}&quot;, slice_result.iter().filter(|&amp;v| *v == 100).count());
+    println!(&quot;{}&quot;, pointer_result.iter().filter(|&amp;v| *v == 100).count());
+}
+</code></pre>
 
                     </main>
 
