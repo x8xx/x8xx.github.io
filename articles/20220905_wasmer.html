@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Rust - nagilog</title>
+        <title>wasmerでランタイム上からホスト関数を呼び出すメモ (20220905) - nagilog</title>
 
 
         <!-- Custom HTML head -->
@@ -81,7 +81,7 @@
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded "><a href="../whoami.html">whoami</a></li><li class="chapter-item expanded "><div>tag</div></li><li><ol class="section"><li class="chapter-item expanded "><a href="../tags/rust.html" class="active">Rust</a></li><li class="chapter-item expanded "><a href="../tags/wasm.html">WASM</a></li></ol></li><li class="chapter-item expanded "><a href="../all.html">all</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../articles/20220905_wasmer.html">wasmerでランタイム上からホスト関数を呼び出すメモ (20220905)</a></li><li class="chapter-item expanded "><a href="../articles/20220902_speed_test_slice_vs_pointer.html">Rustのスライスとポインタの速度比較 (20220902)</a></li></ol></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded "><a href="../whoami.html">whoami</a></li><li class="chapter-item expanded "><div>tag</div></li><li><ol class="section"><li class="chapter-item expanded "><a href="../tags/rust.html">Rust</a></li><li class="chapter-item expanded "><a href="../tags/wasm.html">WASM</a></li></ol></li><li class="chapter-item expanded "><a href="../all.html">all</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../articles/20220905_wasmer.html" class="active">wasmerでランタイム上からホスト関数を呼び出すメモ (20220905)</a></li><li class="chapter-item expanded "><a href="../articles/20220902_speed_test_slice_vs_pointer.html">Rustのスライスとポインタの速度比較 (20220902)</a></li></ol></li></ol>
             </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
         </nav>
@@ -142,21 +142,143 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="tag-rust"><a class="header" href="#tag-rust">tag: Rust</a></h1>
-<ul>
-<li><a href="../articles/20220902_speed_test_slice_vs_pointer.html">Rustのスライスとポインタの速度比較 (20220902)</a></li>
-<li><a href="../articles/20220905_wasmer.html">wasmerでランタイム上からホスト関数を呼び出すメモ (20220905)</a></li>
-</ul>
+                        <h1 id="wasmerでランタイム上からホスト関数を呼び出すメモ"><a class="header" href="#wasmerでランタイム上からホスト関数を呼び出すメモ">wasmerでランタイム上からホスト関数を呼び出すメモ</a></h1>
+<p>注意) 絶対他に最適な方法があると思うんだけど, まぁ動くのでﾖｼ</p>
+<p>コードは<a href="https://github.com/x8xx/nagilog/tree/master/src/articles/20220905/">ここ</a></p>
+<h2 id="やりたいこと"><a class="header" href="#やりたいこと">やりたいこと</a></h2>
+<p>WASMランタイムからホストのメモリ領域のデータを取りたい！！！！！！</p>
+<p>メモリ領域をいい感じに共有できる方法があると思うけど, どうすればいいのか分からない</p>
+<p>そこでホストでデータを取ってくる関数を実装して, そいつを呼び出したらいいじゃんってなったので, とりあえず実装してみた話</p>
+<p>ランタイムには<a href="https://github.com/wasmerio/wasmer">wasmer</a>を使った</p>
+<h2 id="wasmプログラムの用意"><a class="header" href="#wasmプログラムの用意">wasmプログラムの用意</a></h2>
+<p>プログラム書く前にwasm32-wasiのターゲットを追加しておきます</p>
+<pre><code>rustup target add wasm32-wasi
+</code></pre>
+<p>計算するだけのプログラムを書きます.</p>
+<p>readがホスト環境で実装される関数です.</p>
+<p>i64にキャストされたポインタが, 実行時にcalc関数に渡されるので, それをreadに渡してあげればホストからデータが取れます.</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span>#![no_main]
+
+<span class="boring">fn main() {
+</span>extern {
+    pub fn read(pointer: i64, offset: u8) -&gt; i32;
+}
+
+#[no_mangle]
+pub fn calc(pointer: i64, input: u8) -&gt; i32 {
+    let val = unsafe { read(pointer, 2) };
+    input as i32 + val
+}
+<span class="boring">}
+</span></code></pre></pre>
+<p>コンパイルします.
+そのままじゃ&quot;read&quot;の実装がないやんけ！って怒られるので, --emit=objをつけて黙らせます</p>
+<pre><code>rustc -O --emit=obj  --target wasm32-wasi calc.rs
+
+</code></pre>
+<p>できたcalc.o(wasm)をwatに変換して見てみる</p>
+<pre><code># wasm2wat calc.o
+(module
+  (type (;0;) (func (param i64 i32) (result i32)))
+  (import &quot;env&quot; &quot;__linear_memory&quot; (memory (;0;) 0))
+  (import &quot;env&quot; &quot;read&quot; (func (;0;) (type 0)))
+  (func $calc (type 0) (param i64 i32) (result i32)
+    local.get 0
+    i32.const 2
+    call 0
+    local.get 1
+    i32.const 255
+    i32.and
+    i32.add))
+</code></pre>
+<p>これでできてる気がしますが, exportがないのでランタイムからcalcを呼べません.</p>
+<p>コンパイラくんにexportを付与してもらう方法が, 分からなかったので無理やりつけます.</p>
+<pre><code>wasm2wat calc.o | sed '$ s/)$/\(export &quot;calc&quot; \(func $calc\)\)\)/' &gt; tmp.wat
+wat2wasm tmp.wat -o calc.wasm
+</code></pre>
+<p>wasm2watとwat2wasmは, <a href="https://github.com/WebAssembly/wabt">wabt</a>にあります.</p>
+<h2 id="ランタイムを用意して実行"><a class="header" href="#ランタイムを用意して実行">ランタイムを用意して実行</a></h2>
+<pre><pre class="playground"><code class="language-rust">use std::fs::File;
+use std::io::prelude::*;
+use wasmer::{ Store, Module, Function, Memory, MemoryType, Instance, imports, Value };
+
+
+fn main() {
+    /**
+     * wasmファイル読み込み
+     */
+    let mut f = File::open(&quot;../wasm/calc.wasm&quot;).unwrap();
+    let metadata = std::fs::metadata(&quot;../wasm/calc.wasm&quot;).unwrap();
+    let mut wasm = vec![0;metadata.len() as usize];
+    f.read(&amp;mut wasm).unwrap();
+
+    /**
+     * wasmから呼び出すホスト関数と仮データの用意
+     */
+    let mut data: Vec&lt;u8&gt; = Vec::new();
+    data.push(0);
+    data.push(1);
+    data.push(2);
+    data.push(3);
+    let data_ptr = data.as_ptr();
+
+    fn read(pointer: i64, offset: u8) -&gt; i32 {
+        unsafe {
+            // 生ポインタに戻してアクセスする
+            (*(pointer as *const u8).offset(offset as isize)) as i32
+        }
+    }
+
+    /**
+     * wasmer用意
+     */
+    // storeの役割がいまいちわからない
+    // とりあえず分けてみた
+    let store = Store::default();
+    let read_fn_store = Store::default();
+    let memory_store = Store::default();
+
+    let module = Module::from_binary(&amp;store, &amp;wasm).unwrap();
+    let read_fn = Function::new_native(&amp;read_fn_store, read);
+    let linear_memory = Memory::new(&amp;memory_store, MemoryType::new(1, None, false)).unwrap();
+
+    // ホストのread関数をimportしてあげる
+    let import_object = imports! {
+        &quot;env&quot; =&gt; {
+            &quot;read&quot; =&gt; read_fn,
+            &quot;__linear_memory&quot; =&gt; linear_memory,
+        },
+    };
+
+    let instance = Instance::new(&amp;module, &amp;import_object).unwrap();
+
+    /**
+     * 実行フェイズ
+     */
+    let calc_fn = instance.exports.get_function(&quot;calc&quot;).unwrap();
+    // 引数を設定
+    let mut calc_args: Vec&lt;Value&gt; = Vec::new();
+    calc_args.push(Value::I64(data_ptr as i64));
+    calc_args.push(Value::I32(20));
+
+    // 実行
+    let result = calc_fn.call(&amp;calc_args).unwrap();
+    // result: 22 
+    println!(&quot;result: {}&quot;, result[0].unwrap_i32());
+}
+</code></pre></pre>
+<p>おわりだよー</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../whoami.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../all.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next" href="../tags/wasm.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next" href="../articles/20220902_speed_test_slice_vs_pointer.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -166,11 +288,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../whoami.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../all.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next" href="../tags/wasm.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next" href="../articles/20220902_speed_test_slice_vs_pointer.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
